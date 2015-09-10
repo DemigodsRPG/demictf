@@ -11,14 +11,13 @@ import com.demigodsrpg.demigames.game.mixin.WarmupLobbyMixin;
 import com.demigodsrpg.demigames.session.Session;
 import com.demigodsrpg.demigames.stage.DefaultStage;
 import com.demigodsrpg.demigames.stage.StageHandler;
-import org.bukkit.Bukkit;
-import org.bukkit.GameMode;
-import org.bukkit.Location;
+import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.*;
 
@@ -168,14 +167,13 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         Optional<Session> opSession = checkPlayer(event.getPlayer());
         if (Action.LEFT_CLICK_BLOCK == event.getAction()) {
             if (opSession.isPresent()) {
-                event.setCancelled(true);
                 Player player = event.getPlayer();
                 Session session = opSession.get();
                 CaptureTeam team = getTeam(session, player);
                 Location clicked = event.getClickedBlock().getLocation();
                 Location flag = getFlag(session, team);
                 if(clicked.distance(flag) <= 0.5D) {
-                    flagCaptured(session, team, player);
+                    flagStolen(session, team, player);
                 }
             }
         }
@@ -183,8 +181,33 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
 
     // -- PRIVATE HELPER METHODS -- //
 
-    private void flagCaptured(Session session, CaptureTeam team, Player player) {
+    private void flagStolen(Session session, CaptureTeam team, Player player) {
+        setFlagLives(session, team, getFlagLives(session, team) - 1);
+        getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag has been stolen by " +
+                player.getDisplayName() + team + "!");
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(getBackend(), new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (player.isOnline()) {
+                    Location magic = player.getLocation().add(0, 2, 0);
+                    magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTeam.RED ?
+                                    Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F, 1 / 10,
+                            10, 40);
+                    if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
+                        flagCaptured(session, team, player);
+                        cancel();
+                    }
+                } else {
+                    getBackend().broadcastTaggedMessage(session, team + player.getDisplayName() + team +
+                            " has dropped the " + team.name() + " flag!");
+                    cancel();
+                }
+            }
+        }, 10, 10);
+    }
 
+    private void flagCaptured(Session session, CaptureTeam team, Player player) {
+        // TODO
     }
 
     // -- PRIVATE GETTER/SETTER METHODS -- //
@@ -196,6 +219,17 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
             return flagLoc.get();
         }
         return Bukkit.getWorld(session.getId()).getSpawnLocation();
+    }
+
+    private int getFlagLives(Session session, CaptureTeam team) {
+        if (!session.getData().containsKey("lives." + team.name())) {
+            setFlagLives(session, team, FLAG_LIVES);
+        }
+        return (int) session.getData().get("lives." + team.name());
+    }
+
+    private void setFlagLives(Session session, CaptureTeam team, int lives) {
+        session.getData().put("lives." + team.name(), lives);
     }
 
     private CaptureTeam getTeam(Session session, Player player) {
