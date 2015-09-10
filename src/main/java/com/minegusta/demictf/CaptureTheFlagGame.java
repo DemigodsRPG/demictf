@@ -1,21 +1,24 @@
 package com.minegusta.demictf;
 
-import com.demigodsrpg.demigames.event.PlayerJoinMinigameEvent;
-import com.demigodsrpg.demigames.event.PlayerQuitMinigameEvent;
+import com.censoredsoftware.library.util.RandomUtil;
+import com.demigodsrpg.demigames.event.*;
 import com.demigodsrpg.demigames.game.Game;
 import com.demigodsrpg.demigames.game.GameLocation;
 import com.demigodsrpg.demigames.game.mixin.ConfinedSpectateMixin;
 import com.demigodsrpg.demigames.game.mixin.ErrorTimerMixin;
 import com.demigodsrpg.demigames.game.mixin.FakeDeathMixin;
 import com.demigodsrpg.demigames.game.mixin.WarmupLobbyMixin;
+import com.demigodsrpg.demigames.kit.Kit;
 import com.demigodsrpg.demigames.session.Session;
 import com.demigodsrpg.demigames.stage.DefaultStage;
 import com.demigodsrpg.demigames.stage.StageHandler;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.scheduler.BukkitRunnable;
 
@@ -89,6 +92,16 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         return Bukkit.getWorld(session.getId()).getSpawnLocation();
     }
 
+    @Override
+    public Location getWarmupSpawn(Session session, Player player) {
+        return null;
+    }
+
+    @Override
+    public int getWarmupSeconds() {
+        return 60;
+    }
+
     // -- LOCATIONS -- //
 
     // Spectator
@@ -108,20 +121,64 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
 
     @Override
     public void onJoin(PlayerJoinMinigameEvent event) {
+        if (event.getGame().isPresent() && event.getGame().get().equals(this)) {
+            Optional<Session> opSession = checkPlayer(event.getPlayer());
 
+            if (opSession.isPresent()) {
+                assignTeam(opSession.get(), event.getPlayer());
+                event.getPlayer().teleport(getWarmupSpawn(opSession.get(), event.getPlayer()));
+                event.getPlayer().setGameMode(GameMode.SURVIVAL);
+
+                // TODO Kits
+            }
+        }
     }
 
     @Override
     public void onLeave(PlayerQuitMinigameEvent event) {
+        if (event.getGame().isPresent() && event.getGame().get().equals(this)) {
+            Kit.EMPTY.apply(getBackend(), event.getPlayer(), true);
 
-    }
-
-    @Override
-    public Location getWarmupSpawn(Session session, Player player) {
-        return null;
+            Optional<Session> opSession = event.getSession();
+            if (opSession.isPresent()) {
+                Session session = opSession.get();
+                if (session.getProfiles().size() < getMinimumPlayers()) {
+                    session.endSession();
+                }
+            }
+        }
     }
 
     // -- STAGES -- //
+
+    @StageHandler(stage = DefaultStage.SETUP)
+    public void roundSetup(Session session) {
+        // Make sure the world is present
+        if (session.getWorld().isPresent()) {
+            // Get the world
+            World world = session.getWorld().get();
+
+            // Get blue
+            blueSpawn = getLocation("blue.spawn", world.getSpawnLocation());
+            blueFlag = getLocation("blue.flag", world.getSpawnLocation());
+
+            // Get red
+            redSpawn = getLocation("red.spawn", world.getSpawnLocation());
+            redFlag = getLocation("red.flag", world.getSpawnLocation());
+
+            // Get the spectate spawn
+            spectatorSpawn = getLocation("spectate", world.getSpawnLocation());
+
+            // Setup spectator data
+            session.getData().put("spectators", new ArrayList<String>());
+
+            // Update the stage TODO This isn't the best place to start the warmup
+            session.updateStage(DefaultStage.WARMUP, true);
+        } else {
+            // Update the stage
+            session.updateStage(DefaultStage.ERROR, true);
+        }
+    }
 
     @StageHandler(stage = DefaultStage.BEGIN)
     public void roundBegin(Session session) {
@@ -160,6 +217,35 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         session.updateStage(DefaultStage.SETUP, true);
     }
 
+    // -- WIN/LOSE/TIE CONDITIONS -- //
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onWin(PlayerWinMinigameEvent event) {
+
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onLose(PlayerLoseMinigameEvent event) {
+
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onTie(PlayerTieMinigameEvent event) {
+
+    }
+
+    // -- START & STOP -- //
+
+    @Override
+    public void onServerStart() {
+
+    }
+
+    @Override
+    public void onServerStop() {
+        getBackend().getSessionRegistry().fromGame(this).forEach(com.demigodsrpg.demigames.session.Session::endSession);
+    }
+
     // -- LISTENERS -- //
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -179,10 +265,31 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         }
     }
 
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onDamage(EntityDamageByEntityEvent event) {
+        if (event.getEntity() instanceof Player) {
+            Player player = (Player) event.getEntity();
+            Optional<Session> opSession = checkPlayer(player);
+            if (opSession.isPresent()) {
+                Session session = opSession.get();
+                CaptureTeam team = getTeam(session, player);
+                Player other = null;
+                if (event.getDamager() instanceof Player) {
+                    other = (Player) event.getDamager();
+                } else if (event.getDamager() instanceof Projectile &&
+                        ((Projectile) event.getDamager()).getShooter() instanceof Player) {
+                    other = (Player) ((Projectile) event.getDamager()).getShooter();
+                }
+                if (team == getTeam(session, other)) {
+                    event.setCancelled(true);
+                }
+            }
+        }
+    }
+
     // -- PRIVATE HELPER METHODS -- //
 
     private void flagStolen(Session session, CaptureTeam team, Player player) {
-        setFlagLives(session, team, getFlagLives(session, team) - 1);
         getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag has been stolen by " +
                 player.getDisplayName() + team + "!");
         Bukkit.getScheduler().scheduleSyncRepeatingTask(getBackend(), new BukkitRunnable() {
@@ -191,8 +298,8 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
                 if (player.isOnline()) {
                     Location magic = player.getLocation().add(0, 2, 0);
                     magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTeam.RED ?
-                                    Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F, 1 / 10,
-                            10, 40);
+                                    Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F,
+                            1 / 10, 10, 40);
                     if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
                         flagCaptured(session, team, player);
                         cancel();
@@ -207,7 +314,26 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
     }
 
     private void flagCaptured(Session session, CaptureTeam team, Player player) {
+        setFlagLives(session, team, getFlagLives(session, team) - 1);
         // TODO
+    }
+
+    private CaptureTeam assignTeam(Session session, Player player) {
+        int redSize = (int) session.getData().getOrDefault("red.size", 0);
+        int blueSize = (int) session.getData().getOrDefault("blue.size", 0);
+
+        boolean red = redSize < blueSize;
+        if (redSize == blueSize) {
+            red = RandomUtil.randomPercentBool(42.0D); // Blue team tends to lose more often than red
+        }
+        if (red) {
+            session.getData().put("red.size", redSize + 1);
+            setTeam(session, player, CaptureTeam.RED);
+        } else {
+            session.getData().put("blue.size", blueSize + 1);
+            setTeam(session, player, CaptureTeam.BLUE);
+        }
+        return red ? CaptureTeam.RED : CaptureTeam.BLUE;
     }
 
     // -- PRIVATE GETTER/SETTER METHODS -- //
