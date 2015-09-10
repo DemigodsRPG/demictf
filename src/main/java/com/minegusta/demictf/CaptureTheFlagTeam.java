@@ -1,12 +1,12 @@
 package com.minegusta.demictf;
 
-public enum CaptureTeam {
+public enum CaptureTheFlagTeam {
     RED('c'), BLUE('9');
 
     char code;
     String str;
 
-    CaptureTeam(char code) {
+    CaptureTheFlagTeam(char code) {
         this.code = code;
         str = new String(new char[]{'§', code});
     }

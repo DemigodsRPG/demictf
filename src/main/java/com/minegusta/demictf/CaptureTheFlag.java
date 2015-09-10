@@ -24,24 +24,10 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.*;
 
-public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMixin, FakeDeathMixin,
+public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTimerMixin, FakeDeathMixin,
         ConfinedSpectateMixin {
 
-    // -- CONST -- //
-
-    static int FLAG_LIVES = 3;
-
     // -- SETTINGS -- //
-
-    @Override
-    public String getName() {
-        return "Capture The Flag";
-    }
-
-    @Override
-    public String getDirectory() {
-        return "ctf";
-    }
 
     @Override
     public GameMode getDefaultGamemode() {
@@ -66,11 +52,6 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
     @Override
     public int getMinimumPlayers() {
         return 2;
-    }
-
-    @Override
-    public int getMaximumPlayers() {
-        return 20;
     }
 
     @Override
@@ -101,6 +82,8 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
     public int getWarmupSeconds() {
         return 60;
     }
+
+    public abstract int getDefaultFlagLives();
 
     // -- LOCATIONS -- //
 
@@ -255,7 +238,7 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
             if (opSession.isPresent()) {
                 Player player = event.getPlayer();
                 Session session = opSession.get();
-                CaptureTeam team = getTeam(session, player);
+                CaptureTheFlagTeam team = getTeam(session, player);
                 Location clicked = event.getClickedBlock().getLocation();
                 Location flag = getFlag(session, team);
                 if(clicked.distance(flag) <= 0.5D) {
@@ -272,7 +255,7 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
             Optional<Session> opSession = checkPlayer(player);
             if (opSession.isPresent()) {
                 Session session = opSession.get();
-                CaptureTeam team = getTeam(session, player);
+                CaptureTheFlagTeam team = getTeam(session, player);
                 Player other = null;
                 if (event.getDamager() instanceof Player) {
                     other = (Player) event.getDamager();
@@ -289,7 +272,7 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
 
     // -- PRIVATE HELPER METHODS -- //
 
-    private void flagStolen(Session session, CaptureTeam team, Player player) {
+    private void flagStolen(Session session, CaptureTheFlagTeam team, Player player) {
         getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag has been stolen by " +
                 player.getDisplayName() + team + "!");
         Bukkit.getScheduler().scheduleSyncRepeatingTask(getBackend(), new BukkitRunnable() {
@@ -297,7 +280,7 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
             public void run() {
                 if (player.isOnline()) {
                     Location magic = player.getLocation().add(0, 2, 0);
-                    magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTeam.RED ?
+                    magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTheFlagTeam.RED ?
                                     Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F,
                             1 / 10, 10, 40);
                     if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
@@ -313,12 +296,12 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         }, 10, 10);
     }
 
-    private void flagCaptured(Session session, CaptureTeam team, Player player) {
+    private void flagCaptured(Session session, CaptureTheFlagTeam team, Player player) {
         setFlagLives(session, team, getFlagLives(session, team) - 1);
         // TODO
     }
 
-    private CaptureTeam assignTeam(Session session, Player player) {
+    private CaptureTheFlagTeam assignTeam(Session session, Player player) {
         int redSize = (int) session.getData().getOrDefault("red.size", 0);
         int blueSize = (int) session.getData().getOrDefault("blue.size", 0);
 
@@ -328,18 +311,18 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         }
         if (red) {
             session.getData().put("red.size", redSize + 1);
-            setTeam(session, player, CaptureTeam.RED);
+            setTeam(session, player, CaptureTheFlagTeam.RED);
         } else {
             session.getData().put("blue.size", blueSize + 1);
-            setTeam(session, player, CaptureTeam.BLUE);
+            setTeam(session, player, CaptureTheFlagTeam.BLUE);
         }
-        return red ? CaptureTeam.RED : CaptureTeam.BLUE;
+        return red ? CaptureTheFlagTeam.RED : CaptureTheFlagTeam.BLUE;
     }
 
     // -- PRIVATE GETTER/SETTER METHODS -- //
 
-    private Location getFlag(Session session, CaptureTeam team) {
-        GameLocation flag = team == CaptureTeam.RED ? redFlag : blueFlag;
+    private Location getFlag(Session session, CaptureTheFlagTeam team) {
+        GameLocation flag = team == CaptureTheFlagTeam.RED ? redFlag : blueFlag;
         Optional<Location> flagLoc = flag.toLocation(session.getId());
         if (flagLoc.isPresent()) {
             return flagLoc.get();
@@ -347,30 +330,30 @@ public class CaptureTheFlagGame implements Game, WarmupLobbyMixin, ErrorTimerMix
         return Bukkit.getWorld(session.getId()).getSpawnLocation();
     }
 
-    private int getFlagLives(Session session, CaptureTeam team) {
+    private int getFlagLives(Session session, CaptureTheFlagTeam team) {
         if (!session.getData().containsKey("lives." + team.name())) {
-            setFlagLives(session, team, FLAG_LIVES);
+            setFlagLives(session, team, getDefaultFlagLives());
         }
         return (int) session.getData().get("lives." + team.name());
     }
 
-    private void setFlagLives(Session session, CaptureTeam team, int lives) {
+    private void setFlagLives(Session session, CaptureTheFlagTeam team, int lives) {
         session.getData().put("lives." + team.name(), lives);
     }
 
-    private CaptureTeam getTeam(Session session, Player player) {
+    private CaptureTheFlagTeam getTeam(Session session, Player player) {
         return getTeamData(session).get(player.getName());
     }
 
-    private void setTeam(Session session, Player player, CaptureTeam team) {
+    private void setTeam(Session session, Player player, CaptureTheFlagTeam team) {
         getTeamData(session).put(player.getName(), team);
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, CaptureTeam> getTeamData(Session session) {
+    private Map<String, CaptureTheFlagTeam> getTeamData(Session session) {
         if(!session.getData().containsKey("teams")) {
-            session.getData().put("teams", new HashMap<String, CaptureTeam>());
+            session.getData().put("teams", new HashMap<String, CaptureTheFlagTeam>());
         }
-        return (Map<String, CaptureTeam>) session.getData().get("teams");
+        return (Map<String, CaptureTheFlagTeam>) session.getData().get("teams");
     }
 }
