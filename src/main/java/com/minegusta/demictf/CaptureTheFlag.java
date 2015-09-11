@@ -4,7 +4,6 @@ import com.censoredsoftware.library.util.RandomUtil;
 import com.demigodsrpg.demigames.event.*;
 import com.demigodsrpg.demigames.game.Game;
 import com.demigodsrpg.demigames.game.GameLocation;
-import com.demigodsrpg.demigames.game.mixin.ConfinedSpectateMixin;
 import com.demigodsrpg.demigames.game.mixin.ErrorTimerMixin;
 import com.demigodsrpg.demigames.game.mixin.FakeDeathMixin;
 import com.demigodsrpg.demigames.game.mixin.WarmupLobbyMixin;
@@ -24,8 +23,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.*;
 
-public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTimerMixin, FakeDeathMixin,
-        ConfinedSpectateMixin {
+public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTimerMixin, FakeDeathMixin {
 
     // -- SETTINGS -- //
 
@@ -64,23 +62,28 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
         return new ArrayList<>(); // No default unlockables for this game
     }
 
-    @Override
+    /* @Override
     public Location getSpectatorSpawn(Session session) {
         Optional<Location> spawn = spectatorSpawn.toLocation(session.getId());
         if (spawn.isPresent()) {
             return spawn.get();
         }
         return Bukkit.getWorld(session.getId()).getSpawnLocation();
-    }
+    }*/
 
     @Override
     public Location getWarmupSpawn(Session session, Player player) {
-        return null;
+        GameLocation spawn = getTeam(session, player) == CaptureTheFlagTeam.RED ? redSpawn : blueSpawn;
+        Optional<Location> spawnLoc = spawn.toLocation(session.getId());
+        if (spawnLoc.isPresent()) {
+            return spawnLoc.get();
+        }
+        return Bukkit.getWorld(session.getId()).getSpawnLocation();
     }
 
     @Override
     public int getWarmupSeconds() {
-        return 60;
+        return 30;
     }
 
     public abstract int getDefaultFlagLives();
@@ -88,7 +91,7 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     // -- LOCATIONS -- //
 
     // Spectator
-    GameLocation spectatorSpawn;
+    //GameLocation spectatorSpawn;
 
     // Blue
     GameLocation blueSpawn;
@@ -103,6 +106,7 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     // -- JOIN/LEAVE -- //
 
     @Override
+    @EventHandler(priority = EventPriority.LOWEST)
     public void onJoin(PlayerJoinMinigameEvent event) {
         if (event.getGame().isPresent() && event.getGame().get().equals(this)) {
             Optional<Session> opSession = checkPlayer(event.getPlayer());
@@ -118,6 +122,7 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     }
 
     @Override
+    @EventHandler(priority = EventPriority.LOWEST)
     public void onLeave(PlayerQuitMinigameEvent event) {
         if (event.getGame().isPresent() && event.getGame().get().equals(this)) {
             Kit.EMPTY.apply(getBackend(), event.getPlayer(), true);
@@ -149,11 +154,19 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
             redSpawn = getLocation("red.spawn", world.getSpawnLocation());
             redFlag = getLocation("red.flag", world.getSpawnLocation());
 
+            // Set the flags to correct colors
+            if (redFlag.toLocation(session.getId()).isPresent()) {
+                redFlag.toLocation(session.getId()).get().getBlock().setType(Material.REDSTONE_BLOCK);
+            }
+            if (blueFlag.toLocation(session.getId()).isPresent()) {
+                blueFlag.toLocation(session.getId()).get().getBlock().setType(Material.LAPIS_BLOCK);
+            }
+
             // Get the spectate spawn
-            spectatorSpawn = getLocation("spectate", world.getSpawnLocation());
+            //spectatorSpawn = getLocation("spectate", world.getSpawnLocation());
 
             // Setup spectator data
-            session.getData().put("spectators", new ArrayList<String>());
+            //session.getData().put("spectators", new ArrayList<String>());
 
             // Update the stage TODO This isn't the best place to start the warmup
             session.updateStage(DefaultStage.WARMUP, true);
@@ -275,7 +288,7 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     private void flagStolen(Session session, CaptureTheFlagTeam team, Player player) {
         getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag has been stolen by " +
                 player.getDisplayName() + team + "!");
-        Bukkit.getScheduler().scheduleSyncRepeatingTask(getBackend(), new BukkitRunnable() {
+        session.getData().put("task." + team.name(), Bukkit.getScheduler().scheduleSyncRepeatingTask(getBackend(), new BukkitRunnable() {
             @Override
             public void run() {
                 if (player.isOnline()) {
@@ -285,15 +298,18 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
                             1 / 10, 10, 40);
                     if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
                         flagCaptured(session, team, player);
-                        cancel();
+                        Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
                     }
                 } else {
                     getBackend().broadcastTaggedMessage(session, team + player.getDisplayName() + team +
                             " has dropped the " + team.name() + " flag!");
-                    cancel();
+                    Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
+                }
+                if (session.isDone()) {
+                    Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
                 }
             }
-        }, 10, 10);
+        }, 10, 10));
     }
 
     private void flagCaptured(Session session, CaptureTheFlagTeam team, Player player) {
