@@ -11,6 +11,7 @@ import com.demigodsrpg.demigames.kit.Kit;
 import com.demigodsrpg.demigames.session.Session;
 import com.demigodsrpg.demigames.stage.DefaultStage;
 import com.demigodsrpg.demigames.stage.StageHandler;
+import com.demigodsrpg.demigames.unlockable.UnlockableKit;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -19,11 +20,31 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.material.MaterialData;
 
 import java.util.*;
 
 public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTimerMixin, FakeDeathMixin {
+
+    // -- KITS -- //
+
+    // Free
+    final UnlockableKit SABER = createKit("ctf_saber", new MaterialData(Material.IRON_SWORD),
+            "Fight with swords.");
+    final UnlockableKit ARCHER = createKit("ctf_archer", new MaterialData(Material.BOW),
+            "Battle with a bow and arrows.");
+    final UnlockableKit CASTER = createKit("ctf_caster", new MaterialData(Material.POTION),
+            "Use magic to overpower your enemies.");
+
+    // Premium
+    final UnlockableKit LANCER = createKit("ctf_lancer", 100, new MaterialData(Material.DIAMOND_SPADE),
+            "Fight with a lance and be the ultimate bro.");
+    final UnlockableKit RIDER = createKit("ctf_rider", 100, new MaterialData(Material.SADDLE),
+            "Use your power over mounts to your advantage.");
+    final UnlockableKit BERSERKER = createKit("ctf_berserker", 100, new MaterialData(Material.FIREBALL),
+            "Unleash your uncontrollable rage.");
+    final UnlockableKit ASSASSIN = createKit("ctf_assassin", 100, new MaterialData(Material.GHAST_TEAR),
+            "Skillfully take down enemies.");
 
     // -- SETTINGS -- //
 
@@ -59,7 +80,7 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
 
     @Override
     public List<String> getDefaultUnlockables() {
-        return new ArrayList<>(); // No default unlockables for this game
+        return Arrays.asList(SABER.getName(), ARCHER.getName(), CASTER.getName());
     }
 
     /* @Override
@@ -288,28 +309,26 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     private void flagStolen(Session session, CaptureTheFlagTeam team, Player player) {
         getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag has been stolen by " +
                 player.getDisplayName() + team + "!");
-        session.getData().put("task." + team.name(), Bukkit.getScheduler().scheduleSyncRepeatingTask(getBackend(), new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (player.isOnline()) {
-                    Location magic = player.getLocation().add(0, 2, 0);
-                    magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTheFlagTeam.RED ?
-                                    Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F,
-                            1 / 10, 10, 40);
-                    if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
-                        flagCaptured(session, team, player);
+        session.getData().put("task." + team.name(), Bukkit.getScheduler().
+                scheduleSyncRepeatingTask(getBackend(), () -> {
+                    if (player.isOnline()) {
+                        Location magic = player.getLocation().add(0, 2, 0);
+                        magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTheFlagTeam.RED ?
+                                        Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F,
+                                1 / 10, 10, 40);
+                        if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
+                            flagCaptured(session, team, player);
+                            Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
+                        }
+                    } else {
+                        getBackend().broadcastTaggedMessage(session, team + player.getDisplayName() + team +
+                                " has dropped the " + team.name() + " flag!");
                         Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
                     }
-                } else {
-                    getBackend().broadcastTaggedMessage(session, team + player.getDisplayName() + team +
-                            " has dropped the " + team.name() + " flag!");
-                    Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
-                }
-                if (session.isDone()) {
-                    Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
-                }
-            }
-        }, 10, 10));
+                    if (session.isDone()) {
+                        Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
+                    }
+                }, 10, 10));
     }
 
     private void flagCaptured(Session session, CaptureTheFlagTeam team, Player player) {
@@ -371,5 +390,13 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
             session.getData().put("teams", new HashMap<String, CaptureTheFlagTeam>());
         }
         return (Map<String, CaptureTheFlagTeam>) session.getData().get("teams");
+    }
+
+    private UnlockableKit createKit(String name, MaterialData data, String... lore) {
+        return new UnlockableKit(getBackend(), name, 0, lore, false, false, data.getItemType(), data.getData());
+    }
+
+    private UnlockableKit createKit(String name, int cost, MaterialData data, String... lore) {
+        return new UnlockableKit(getBackend(), name, cost, lore, false, true, data.getItemType(), data.getData());
     }
 }
