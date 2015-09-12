@@ -1,7 +1,10 @@
 package com.minegusta.demictf;
 
 import com.censoredsoftware.library.util.RandomUtil;
-import com.demigodsrpg.demigames.event.*;
+import com.demigodsrpg.demigames.event.PlayerJoinMinigameEvent;
+import com.demigodsrpg.demigames.event.PlayerLoseMinigameEvent;
+import com.demigodsrpg.demigames.event.PlayerQuitMinigameEvent;
+import com.demigodsrpg.demigames.event.PlayerWinMinigameEvent;
 import com.demigodsrpg.demigames.game.Game;
 import com.demigodsrpg.demigames.game.GameLocation;
 import com.demigodsrpg.demigames.game.mixin.ErrorTimerMixin;
@@ -39,12 +42,14 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     // Premium
     final UnlockableKit LANCER = createKit("ctf_lancer", 100, new MaterialData(Material.DIAMOND_SPADE),
             "Fight with a lance and be the ultimate bro.");
-    final UnlockableKit RIDER = createKit("ctf_rider", 100, new MaterialData(Material.SADDLE),
-            "Use your power over mounts to your advantage.");
     final UnlockableKit BERSERKER = createKit("ctf_berserker", 100, new MaterialData(Material.FIREBALL),
             "Unleash your uncontrollable rage.");
     final UnlockableKit ASSASSIN = createKit("ctf_assassin", 100, new MaterialData(Material.GHAST_TEAR),
             "Skillfully take down enemies.");
+
+    // Special
+    final UnlockableKit RIDER = createKit("ctf_rider", 100, new MaterialData(Material.SADDLE),
+            "Use your power over mounts to your advantage.");
 
     // -- SETTINGS -- //
 
@@ -136,8 +141,6 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
                 assignTeam(opSession.get(), event.getPlayer());
                 event.getPlayer().teleport(getWarmupSpawn(opSession.get(), event.getPlayer()));
                 event.getPlayer().setGameMode(GameMode.SURVIVAL);
-
-                // TODO Kits
             }
         }
     }
@@ -234,21 +237,20 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
         session.updateStage(DefaultStage.SETUP, true);
     }
 
-    // -- WIN/LOSE/TIE CONDITIONS -- //
+    // -- WIN/LOSE CONDITIONS -- //
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWin(PlayerWinMinigameEvent event) {
-
+        if (event.getGame().isPresent() && event.getGame().get().equals(this)) {
+            // TODO
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onLose(PlayerLoseMinigameEvent event) {
-
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onTie(PlayerTieMinigameEvent event) {
-
+        if (event.getGame().isPresent() && event.getGame().get().equals(this)) {
+            // TODO
+        }
     }
 
     // -- START & STOP -- //
@@ -274,9 +276,9 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
                 Session session = opSession.get();
                 CaptureTheFlagTeam team = getTeam(session, player);
                 Location clicked = event.getClickedBlock().getLocation();
-                Location flag = getFlag(session, team);
-                if(clicked.distance(flag) <= 0.5D) {
-                    flagStolen(session, team, player);
+                Location flag = getFlag(session, team.opposite());
+                if (clicked.distance(flag) <= 0.5D && !isFlagStolen(session, team.opposite())) {
+                    flagStolen(session, team.opposite(), player);
                 }
             }
         }
@@ -304,36 +306,68 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
         }
     }
 
+    @EventHandler(priority = EventPriority.LOW)
+    public void onFakeDeath(FakeDeathMixin.Event event) {
+        Optional<Session> opSession = event.getSession();
+        if (opSession.isPresent() && opSession.get().getGame().isPresent() && opSession.get().getGame().get().
+                equals(this)) {
+            Session session = opSession.get();
+            if (isFlagCarrier(session, event.getPlayer())) {
+                CaptureTheFlagTeam team = getTeam(session, event.getPlayer()).opposite();
+                setFlagCarrier(session, event.getPlayer(), false);
+                getBackend().broadcastTaggedMessage(session, team + event.getPlayer().getDisplayName() + team +
+                        " has dropped the " + team.name() + " flag!");
+            }
+            event.getPlayer().teleport(getWarmupSpawn(session, event.getPlayer()));
+        }
+    }
+
     // -- PRIVATE HELPER METHODS -- //
 
     private void flagStolen(Session session, CaptureTheFlagTeam team, Player player) {
         getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag has been stolen by " +
                 player.getDisplayName() + team + "!");
+        setFlagCarrier(session, player, true);
+        String sessionId = session.getId();
         session.getData().put("task." + team.name(), Bukkit.getScheduler().
                 scheduleSyncRepeatingTask(getBackend(), () -> {
-                    if (player.isOnline()) {
-                        Location magic = player.getLocation().add(0, 2, 0);
-                        magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team == CaptureTheFlagTeam.RED ?
-                                        Material.REDSTONE_BLOCK.getId() : Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F, 0.5F,
-                                1 / 10, 10, 40);
-                        if (magic.distance(getWarmupSpawn(session, player)) <= 6.66D) {
-                            flagCaptured(session, team, player);
-                            Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
-                        }
+                    Optional<Session> opCurrent = getBackend().getSessionRegistry().fromKey(sessionId);
+                    if (!opCurrent.isPresent() || opCurrent.get().isDone()) {
+                        Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
                     } else {
-                        getBackend().broadcastTaggedMessage(session, team + player.getDisplayName() + team +
-                                " has dropped the " + team.name() + " flag!");
-                        Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
-                    }
-                    if (session.isDone()) {
-                        Bukkit.getScheduler().cancelTask((int) session.getData().get("task." + team.name()));
+                        Session current = opCurrent.get();
+                        if (player.isOnline() && isFlagCarrier(current, player)) {
+                            Location magic = player.getLocation().add(0, 2, 0);
+                            magic.getWorld().spigot().playEffect(magic, Effect.TILE_BREAK, team ==
+                                            CaptureTheFlagTeam.RED ? Material.REDSTONE_BLOCK.getId() :
+                                            Material.LAPIS_BLOCK.getId(), 0, 0.5F, 0.5F,
+                                    0.5F, 1 / 10, 10, 40);
+                            if (magic.distance(getWarmupSpawn(current, player)) <= 6.66D) {
+                                flagCaptured(current, team, player);
+                                Bukkit.getScheduler().cancelTask((int) current.getData().get("task." + team.name()));
+                            }
+                        } else {
+                            setFlagCarrier(current, player, false);
+                            getBackend().broadcastTaggedMessage(current, team + player.getDisplayName() + team +
+                                    " has dropped the " + team.name() + " flag!");
+                            Bukkit.getScheduler().cancelTask((int) current.getData().get("task." + team.name()));
+                        }
                     }
                 }, 10, 10));
     }
 
     private void flagCaptured(Session session, CaptureTheFlagTeam team, Player player) {
         setFlagLives(session, team, getFlagLives(session, team) - 1);
-        // TODO
+        setFlagCarrier(session, player, false);
+        getBackend().broadcastTaggedMessage(session, team + team.name() + "'s flag been captured!");
+        if (getFlagLives(session, team) >= getDefaultFlagLives()) {
+            callWin(session, player);
+            Optional<Player> looser = getRandom(session, team);
+            if (looser.isPresent()) {
+                callLose(session, looser.get());
+            }
+            session.endSession();
+        }
     }
 
     private CaptureTheFlagTeam assignTeam(Session session, Player player) {
@@ -355,6 +389,22 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
     }
 
     // -- PRIVATE GETTER/SETTER METHODS -- //
+
+    private boolean isFlagStolen(Session session, CaptureTheFlagTeam team) {
+        return session.getData().containsKey(team.name() + ".stolen");
+    }
+
+    private void setFlagCarrier(Session session, Player player, boolean carrying) {
+        if (carrying) {
+            session.getData().put(getTeam(session, player).opposite().name() + ".stolen", player.getName());
+        } else if (isFlagCarrier(session, player)) {
+            session.getData().remove(getTeam(session, player).opposite().name() + ".stolen");
+        }
+    }
+
+    private boolean isFlagCarrier(Session session, Player player) {
+        return player.getName().equals(session.getData().get(getTeam(session, player).opposite().name() + ".stolen"));
+    }
 
     private Location getFlag(Session session, CaptureTheFlagTeam team) {
         GameLocation flag = team == CaptureTheFlagTeam.RED ? redFlag : blueFlag;
@@ -382,6 +432,10 @@ public abstract class CaptureTheFlag implements Game, WarmupLobbyMixin, ErrorTim
 
     private void setTeam(Session session, Player player, CaptureTheFlagTeam team) {
         getTeamData(session).put(player.getName(), team);
+    }
+
+    private Optional<Player> getRandom(Session session, CaptureTheFlagTeam team) {
+        return session.getPlayers().stream().filter(player -> getTeam(session, player) == team).findAny();
     }
 
     @SuppressWarnings("unchecked")

@@ -15,4 +15,11 @@ public enum CaptureTheFlagTeam {
     public String toString() {
         return str;
     }
+
+    public CaptureTheFlagTeam opposite() {
+        if (this.equals(RED)) {
+            return BLUE;
+        }
+        return RED;
+    }
 }
